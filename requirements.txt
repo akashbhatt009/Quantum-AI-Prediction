@@ -5,4 +5,3 @@ scikit-learn
 pytz
 streamlit
 altair
-vega-datasets
