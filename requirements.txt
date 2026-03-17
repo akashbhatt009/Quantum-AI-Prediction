@@ -1,7 +1,7 @@
-yfinance
+altair==5.2.0
 pandas
+yfinance
 numpy
 scikit-learn
 pytz
 streamlit
-altair
