@@ -1,31 +1,38 @@
-import altair as alt
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import streamlit as st
 from sklearn.ensemble import RandomForestRegressor
 import pytz
 from datetime import datetime
+import time
 
-# --- 1. SETTINGS & WATCHLIST ---
-st.set_page_config(page_title="Institutional Stock Engine", layout="wide")
+# --- 1. SETTINGS ---
+st.set_page_config(page_title="PRO Institutional Stock Engine", layout="wide")
 IST = pytz.timezone('Asia/Kolkata')
 
+# --- 2. MID CAP WATCHLIST (High Turnover) ---
 watchlist = [
-    "BEL.NS", "IRFC.NS", "NTPC.NS", "ITC.NS", "BANKBARODA.NS", 
-    "ONGC.NS", "NHPC.NS", "TRIDENT.NS", "TATASTEEL.NS", "WIPRO.NS",
-    "JIOFIN.NS", "SJVN.NS", "COALINDIA.NS", "HINDCOPPER.NS", "NATIONALUM.NS",
-    "PNB.NS", "SOUTHBANK.NS", "IDFCFIRSTB.NS", "MINDACORP.NS", "20MICRONS.NS",
-    "TATAPOWER.NS", "ZENTEC.NS", "OIL.NS", "RVNL.NS", "MOTHERSON.NS"
+    "FEDERALBNK.NS", "IDFCFIRSTB.NS", "L&TFH.NS", "GMRINFRA.NS", "RECLTD.NS", 
+    "PFC.NS", "NATIONALUM.NS", "HINDCOPPER.NS", "SAIL.NS", "NMDC.NS", 
+    "OIL.NS", "MANAPPURAM.NS", "ABCAPITAL.NS", "BANDHANBNK.NS", "CUB.NS", 
+    "ESCORTS.NS", "GLENMARK.NS", "INDIACEM.NS", "TATACOMM.NS", "VOLTAS.NS", 
+    "ASHOKLEY.NS", "CONCOR.NS", "PETRONET.NS", "TATACHEMICALS.NS", "MFSL.NS", 
+    "SUNTV.NS", "RAMCOCEM.NS", "JUBLFOOD.NS", "AUBANK.NS", "POLYCAB.NS"
 ]
 
 def get_engine_data():
     results = []
-    for ticker in watchlist:
+    progress_bar = st.progress(0)
+    
+    for index, ticker in enumerate(watchlist):
         try:
+            time.sleep(0.2) # Prevent Yahoo Finance Blocking
             t = yf.Ticker(ticker)
-            df = t.history(period="5y")
-            if len(df) < 200: continue
+            df = t.history(period="2y")
+            
+            if df.empty or len(df) < 100:
+                continue
             
             info = t.info
             curr_price = df['Close'].iloc[-1]
@@ -33,60 +40,64 @@ def get_engine_data():
             # --- TECHNICALS ---
             df['SMA20'] = df['Close'].rolling(window=20).mean()
             df['SMA50'] = df['Close'].rolling(window=50).mean()
-            df['RSI'] = 100 - (100 / (1 + df['Close'].diff().gt(0).rolling(14).sum() / df['Close'].diff().lt(0).rolling(14).sum()))
-            df['Vol_Ratio'] = df['Volume'] / df['Volume'].rolling(20).mean()
+            
+            # RSI
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            # --- AI PREDICTION & BIAS ---
             df['Target'] = ((df['Close'].shift(-5) - df['Close']) / df['Close']) * 100
-            
-            # --- FUNDAMENTALS ---
-            roce = info.get('returnOnAssets', 0) if info.get('returnOnAssets') else 0
-            debt_to_equity = (info.get('debtToEquity', 0) / 100) if info.get('debtToEquity') else 0
-            pe_ratio = info.get('trailingPE', 0) if info.get('trailingPE') else 0
-            
-            # --- AI BRAIN ---
             train_df = df.dropna()
-            X_features = ['Close', 'RSI', 'Vol_Ratio', 'SMA20', 'SMA50']
-            model = RandomForestRegressor(n_estimators=100, random_state=42)
+            X = train_df[['Close', 'SMA20', 'SMA50']].tail(100)
+            y = train_df['Target'].tail(100)
             
-            model.fit(train_df[X_features][:-10], train_df['Target'][:-10])
-            past_pred = model.predict(train_df[X_features].iloc[-10].values.reshape(1, -1))[0]
-            bias = past_pred - train_df['Target'].iloc[-10]
+            model = RandomForestRegressor(n_estimators=50, random_state=42)
+            model.fit(X[:-5], y[:-5])
             
-            model.fit(train_df[X_features][:-5], train_df['Target'][:-5])
-            raw_future = model.predict(train_df[X_features].tail(1))[0]
-            corrected_pred = raw_future - bias
+            raw_pred = model.predict(X.tail(1))[0]
+            # Bias Correction: adjusting prediction based on recent model error
+            bias_adjustment = train_df['Target'].tail(10).mean() 
+            final_pred = raw_pred + (bias_adjustment * 0.1)
 
-            sentiment = "BULLISH" if curr_price > df['SMA20'].iloc[-1] else "BEARISH"
-            health_score = 100 - (min(pe_ratio, 30) + (debt_to_equity * 20)) + (min(roce * 100, 20))
+            # --- FINANCIAL PARAMETERS (ROE/ROCE) ---
+            roe = info.get('returnOnEquity', 0) * 100
+            roce = info.get('returnOnAssets', 0) * 1.5 * 100 # Proxy for ROCE if not direct
+            mcap = info.get('marketCap', 0) / 10000000 # In Crores
             
-            signal = "WAIT ⏳"
-            if corrected_pred > 2.5 and health_score > 60 and curr_price > df['SMA50'].iloc[-1]:
-                signal = "STRONG BUY 🚀"
-            elif corrected_pred < -1.5 or health_score < 40:
-                signal = "AVOID/EXIT ❌"
+            # Predictability Score (based on volatility)
+            volatility = df['Close'].pct_change().std() * 100
+            predictability = max(0, 100 - (volatility * 10))
 
             results.append({
                 "Stock": ticker,
                 "Price": round(curr_price, 2),
-                "RSI": int(df['RSI'].iloc[-1]),
-                "D/E": round(debt_to_equity, 2),
-                "ROCE %": f"{round(roce*100, 1)}%",
-                "Pred %": round(corrected_pred, 2),
-                "Health": int(health_score),
-                "Sentiment": sentiment,
-                "SIGNAL": signal
+                "Signal %": round(final_pred, 2),
+                "Predictability": f"{int(predictability)}%",
+                "ROE %": f"{round(roe, 1)}%",
+                "ROCE %": f"{round(roce, 1)}%",
+                "Market Cap (Cr)": int(mcap),
+                "Sentiment": "BULLISH" if curr_price > df['SMA20'].iloc[-1] else "BEARISH"
             })
-        except: continue
+        except Exception:
+            continue
+        
+        progress_bar.progress((index + 1) / len(watchlist))
+    
+    progress_bar.empty()
     return pd.DataFrame(results)
 
-# --- 2. STREAMLIT UI ---
+# --- 3. STREAMLIT UI ---
 st.title("💎 PRO Institutional Stock Engine")
-st.markdown(f"**Market Date:** {datetime.now(IST).strftime('%B %d, %Y')} | **Time:** {datetime.now(IST).strftime('%H:%M:%S')} IST")
+st.write(f"Market Date: {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')} IST")
 
 if st.button('Run Analysis 🚀'):
-    with st.spinner('AI Engine is scanning the market...'):
-        data = get_engine_data()
-        if not data.empty:
-            st.dataframe(data.sort_values(by="Pred %", ascending=False), use_container_width=True)
-            st.success("Analysis Complete!")
-        else:
-            st.error("Could not fetch data. Please try again.")
+    data = get_engine_data()
+    if not data.empty:
+        # Highlight top signals
+        st.dataframe(data.sort_values(by="Signal %", ascending=False), use_container_width=True)
+        st.success(f"Analysis complete for {len(data)} Mid Cap stocks!")
+    else:
+        st.error("Could not fetch data. Please wait 1 minute and try again.")
