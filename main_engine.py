@@ -160,3 +160,14 @@ if run:
         """, unsafe_allow_html=True)
     else:
         st.error("Data sequence interrupted. Please check your connection.")
+        # --- ADD THIS TO THE VERY BOTTOM OF YOUR app.py ---
+
+with st.expander("ℹ️ How the Quantum AI Engine Works"):
+    st.markdown("""
+    ### **The Intelligence Loop**
+    This app isn't just a static chart; it's a **Dynamic Learning System**.
+    
+    * **Phase 1: Retraining:** Every time you click 'Generate', the AI rebuilds its neural forest using the last 100 days of market data. It doesn't rely on old "stale" patterns.
+    * **Phase 2: Self-Correction (Backtesting):** Before showing you a prediction, the engine looks at its own performance over the last 3 weeks. It calculates how many times it correctly guessed the 'direction' of the price. If the market is too chaotic, the **Confidence Score** will drop.
+    * **Phase 3: Error Mapping:** The purple 'Probability Zone' on the chart is the AI's way of saying *"I might be wrong by this much."* It calculates the average mistake it made in the past and projects that as a safety margin for you.
+    """)
