@@ -33,9 +33,8 @@ st.markdown("""
         background: linear-gradient(90deg, #4285f4, #9b72cb, #d96570);
         color: white; border: none; border-radius: 100px; padding: 12px 40px;
     }
-    /* Status Badges */
-    .badge-win { background: #e6f4ea; color: #1e8e3e; padding: 4px 12px; border-radius: 12px; font-weight: bold; }
-    .badge-loss { background: #fce8e6; color: #d93025; padding: 4px 12px; border-radius: 12px; font-weight: bold; }
+    .badge-win { background: #e6f4ea; color: #1e8e3e; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 12px; }
+    .badge-loss { background: #fce8e6; color: #d93025; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 12px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -54,31 +53,25 @@ def fetch_data(symbol):
     except: return None
 
 def get_performance_history(df):
-    """Calculates historical hits/misses for the ledger."""
     temp = df.copy()
     temp['MA10'] = temp['Close'].rolling(10).mean()
     temp['Actual_5D'] = temp['Close'].shift(-5)
-    valid = temp.dropna().tail(5) # Look at last 5 completed predictions
+    valid = temp.dropna().tail(5)
     
     history = []
     correct_count = 0
-    
-    # We simulate what the model would have seen 5 days ago
     for date, row in valid.iterrows():
-        # Directional prediction (Simplified for the ledger)
         predicted_up = row['MA10'] > row['Close']
         actual_up = row['Actual_5D'] > row['Close']
         is_correct = predicted_up == actual_up
         if is_correct: correct_count += 1
-        
         history.append({
-            "Date": date.strftime('%Y-%m-%d'),
-            "Price Then": f"${row['Close']:.2f}",
-            "Target (5D)": f"${row['Actual_5D']:.2f}",
-            "Result": "CORRECT ✅" if is_correct else "MISSED ❌",
+            "Date": date.strftime('%b %d'),
+            "Price": f"${row['Close']:.2f}",
+            "Outcome": f"${row['Actual_5D']:.2f}",
+            "Result": "CORRECT" if is_correct else "MISSED",
             "Status": "win" if is_correct else "loss"
         })
-    
     accuracy = (correct_count / 5) * 100 if len(valid) > 0 else 0
     return history, accuracy
 
@@ -97,55 +90,73 @@ if run:
         
         # Model for current prediction
         df['MA10'] = df['Close'].rolling(10).mean()
-        train = df.dropna(subset=['Close', 'MA10']).copy()
-        train['Target'] = train['Close'].shift(-5)
-        model_df = train.dropna()
+        train_df = df.dropna(subset=['Close', 'MA10']).copy()
+        train_df['Target'] = train_df['Close'].shift(-5)
+        model_ready = train_df.dropna()
         
         model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(model_df[['Close', 'MA10']], model_df['Target'])
+        model.fit(model_ready[['Close', 'MA10']], model_ready['Target'])
+        
+        # Calculate Error Margin (Standard Deviation of Residuals)
+        predictions = model.predict(model_ready[['Close', 'MA10']])
+        error_margin = np.std(model_ready['Target'] - predictions)
         
         last_p = df['Close'].iloc[-1]
         pred_p = model.predict(df[['Close', 'MA10']].tail(1))[0]
         change = ((pred_p - last_p) / last_p) * 100
 
-        # --- FOUR METRIC CARDS ---
+        # --- METRIC ROW ---
         m1, m2, m3, m4 = st.columns(4)
         m1.markdown(f"<div class='gemini-card'><div class='m-label'>Price</div><div class='m-value'>${last_p:.2f}</div></div>", unsafe_allow_html=True)
         m2.markdown(f"<div class='gemini-card'><div class='m-label'>AI Target</div><div class='m-value'>${pred_p:.2f}</div></div>", unsafe_allow_html=True)
         m3.markdown(f"<div class='gemini-card'><div class='m-label'>Signal</div><div class='m-value'>{round(change, 1)}%</div></div>", unsafe_allow_html=True)
-        m4.markdown(f"<div class='gemini-card'><div class='m-label'>Accuracy</div><div class='m-value'>{int(acc_score)}%</div></div>", unsafe_allow_html=True)
+        m4.markdown(f"<div class='gemini-card'><div class='m-label'>Confidence</div><div class='m-value'>{int(acc_score)}%</div></div>", unsafe_allow_html=True)
 
-        # --- CHART ---
+        # --- ENHANCED CHART WITH ERROR MARGIN ---
         st.markdown("<div class='gemini-card'>", unsafe_allow_html=True)
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index[-60:], y=df['Close'].tail(60), line=dict(color='#4285f4', width=3)))
-        fig.add_trace(go.Scatter(x=[df.index[-1], df.index[-1] + pd.Timedelta(days=5)], y=[last_p, pred_p], line=dict(color='#9b72cb', dash='dot', width=3)))
-        fig.update_layout(plot_bgcolor='white', paper_bgcolor='white', height=400, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
+        
+        # History
+        fig.add_trace(go.Scatter(x=df.index[-60:], y=df['Close'].tail(60), line=dict(color='#4285f4', width=3), name="Historical"))
+        
+        # Error Margin Shading
+        future_dates = [df.index[-1], df.index[-1] + pd.Timedelta(days=5)]
+        upper_bound = [last_p, pred_p + error_margin]
+        lower_bound = [last_p, pred_p - error_margin]
+        
+        fig.add_trace(go.Scatter(x=future_dates + future_dates[::-1], y=upper_bound + lower_bound[::-1],
+                                fill='toself', fillcolor='rgba(155, 114, 203, 0.15)', line=dict(color='rgba(255,255,255,0)'),
+                                hoverinfo="skip", showlegend=False, name="Probability Zone"))
+        
+        # Forecast Line
+        fig.add_trace(go.Scatter(x=future_dates, y=[last_p, pred_p], line=dict(color='#9b72cb', dash='dot', width=3), name="Neural Path"))
+        
+        fig.update_layout(plot_bgcolor='white', paper_bgcolor='white', height=450, margin=dict(l=0,r=0,t=10,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#f1f3f4'))
         st.plotly_chart(fig, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
         # --- TRUTH-TRACKER LEDGER ---
         st.markdown("### 📊 Neural Performance Ledger")
-        st.markdown("This table compares the AI's past 5 predictions against what actually happened in the market.")
-        
-        cols = st.columns(5)
+        l_cols = st.columns(5)
         for i, item in enumerate(history_data):
-            with cols[i]:
-                badge_class = "badge-win" if item['Status'] == 'win' else "badge-loss"
+            with l_cols[i]:
+                badge = "badge-win" if item['Status'] == 'win' else "badge-loss"
                 st.markdown(f"""
-                    <div class='gemini-card' style='padding:15px; text-align:center;'>
+                    <div class='gemini-card' style='padding:15px; text-align:center; border-top: 4px solid {"#1e8e3e" if item["Status"]=="win" else "#d93025"}'>
                         <small style='color:#70757a;'>{item['Date']}</small><br>
-                        <b style='font-size:18px;'>{item['Target (5D)']}</b><br>
-                        <span class='{badge_class}'>{item['Result']}</span>
+                        <b style='font-size:16px;'>{item['Outcome']}</b><br>
+                        <span class='{badge}'>{item['Result']}</span>
                     </div>
                 """, unsafe_allow_html=True)
-                
+
         # --- INSIGHT ---
         st.markdown(f"""
             <div class='insight-box'>
-                <h3 style='margin-top:0; color:#4285f4;'>✨ Summary</h3>
-                The model is currently showing an <b>{int(acc_score)}% directional hit-rate</b> over the last 5 tested windows. 
-                For {ticker}, the neural network is projecting a price of <b>${pred_p:.2f}</b> by next week. 
-                Keep in mind that past performance does not guarantee future results.
+                <h3 style='margin-top:0; color:#4285f4;'>✨ Neural Summary</h3>
+                The shaded purple area represents the <b>Expected Volatility Range</b> based on the model's historical error. 
+                While the primary target is <b>${pred_p:.2f}</b>, the price could fluctuate within <b>±${round(error_margin, 2)}</b>. 
+                Current directional accuracy is standing at <b>{int(acc_score)}%</b>.
             </div>
         """, unsafe_allow_html=True)
+    else:
+        st.error("Data sequence interrupted. Please check your connection.")
