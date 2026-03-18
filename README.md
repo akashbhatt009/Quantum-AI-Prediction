@@ -13,3 +13,5 @@ The app uses **Instance-Based Learning**. Every time you run a search:
 1. It fetches the most recent 100 days of data.
 2. It retrains the Random Forest Regressor on the fly.
 3. It "Self-Corrects" by measuring the delta between its past training iterations and current reality.
+
+<img width="3410" height="1760" alt="image" src="https://github.com/user-attachments/assets/c383630e-3753-4770-bbed-bb7a25b27046" />
