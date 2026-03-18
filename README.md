@@ -1,4 +1,4 @@
-# ⚡ Quantum AI Prediction Terminal
+# ⚡ Quantum AI Prediction Terminal -https://quantum-ai.streamlit.app/
 
 An advanced financial forecasting engine built with Streamlit and Scikit-Learn. This terminal uses a **Recursive Random Forest** approach to predict asset trajectories based on price-action and moving average clusters.
 
