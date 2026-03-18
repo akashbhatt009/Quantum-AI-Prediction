@@ -6,8 +6,6 @@ from sklearn.ensemble import RandomForestRegressor
 import plotly.graph_objects as go
 
 # --- 1. SECURE API CONFIGURATION ---
-# IMPORTANT: On Streamlit Cloud, go to Settings > Secrets and add:
-# AV_API_KEY = "YOUR_KEY_HERE"
 try:
     AV_API_KEY = st.secrets["AV_API_KEY"]
 except:
@@ -28,6 +26,15 @@ st.markdown("""
         border: 1px solid #eef2f6;
         margin-bottom: 20px;
     }
+    .news-card {
+        background: white;
+        border-radius: 16px;
+        padding: 15px;
+        border: 1px solid #eef2f6;
+        margin-bottom: 10px;
+        transition: 0.3s;
+    }
+    .news-card:hover { border-color: #4285f4; box-shadow: 0 4px 12px rgba(66,133,244,0.1); }
     .insight-box {
         background: #ffffff;
         border-left: 6px solid #4285f4;
@@ -48,18 +55,25 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. DATA ENGINE ---
+# --- 3. DATA & NEWS ENGINE ---
 @st.cache_data(ttl=3600)
-def fetch_data(symbol):
+def fetch_all_intel(symbol):
     try:
-        url = f'https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={AV_API_KEY}'
-        r = requests.get(url).json()
-        if "Time Series (Daily)" not in r: return None
-        df = pd.DataFrame.from_dict(r['Time Series (Daily)'], orient='index').astype(float).sort_index()
+        # Price Data
+        url_p = f'https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={AV_API_KEY}'
+        r_p = requests.get(url_p).json()
+        if "Time Series (Daily)" not in r_p: return None, None
+        df = pd.DataFrame.from_dict(r_p['Time Series (Daily)'], orient='index').astype(float).sort_index()
         df.index = pd.to_datetime(df.index)
         df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        return df
-    except: return None
+        
+        # News Data
+        url_n = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={symbol}&apikey={AV_API_KEY}"
+        r_n = requests.get(url_n).json()
+        news_feed = r_n.get("feed", [])[:3] # Get top 3 headlines
+        
+        return df, news_feed
+    except: return None, None
 
 def get_performance_history(df):
     temp = df.copy()
@@ -82,7 +96,7 @@ def get_performance_history(df):
     accuracy = (correct_count / 5) * 100 if len(valid) > 0 else 0
     return history, accuracy
 
-# --- 4. MAIN INTERFACE ---
+# --- 4. INTERFACE ---
 st.markdown("<h1 style='text-align: center; margin-top: 30px;'>Quantum AI Prediction</h1>", unsafe_allow_html=True)
 
 c1, c2, c3 = st.columns([1, 1.2, 1])
@@ -91,71 +105,11 @@ with c2:
     run = st.button("Generate Intelligence Report", use_container_width=True)
 
 if run:
-    df = fetch_data(ticker)
+    df, news = fetch_all_intel(ticker)
     if df is not None:
         history_data, acc_score = get_performance_history(df)
         
-        # Self-Learning Logic: Retraining the model on current data
+        # ML Training
         df['MA10'] = df['Close'].rolling(10).mean()
         train_df = df.dropna(subset=['Close', 'MA10']).copy()
-        train_df['Target'] = train_df['Close'].shift(-5)
-        model_ready = train_df.dropna()
-        
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(model_ready[['Close', 'MA10']], model_ready['Target'])
-        
-        # Calculate Uncertainty (Error Margin)
-        predictions = model.predict(model_ready[['Close', 'MA10']])
-        error_margin = np.std(model_ready['Target'] - predictions)
-        
-        last_p = df['Close'].iloc[-1]
-        pred_p = model.predict(df[['Close', 'MA10']].tail(1))[0]
-        change = ((pred_p - last_p) / last_p) * 100
-
-        # Metrics
-        m1, m2, m3, m4 = st.columns(4)
-        m1.markdown(f"<div class='gemini-card'><div class='m-label'>Price</div><div class='m-value'>${last_p:.2f}</div></div>", unsafe_allow_html=True)
-        m2.markdown(f"<div class='gemini-card'><div class='m-label'>AI Target</div><div class='m-value'>${pred_p:.2f}</div></div>", unsafe_allow_html=True)
-        m3.markdown(f"<div class='gemini-card'><div class='m-label'>Signal</div><div class='m-value'>{round(change, 1)}%</div></div>", unsafe_allow_html=True)
-        m4.markdown(f"<div class='gemini-card'><div class='m-label'>Confidence</div><div class='m-value'>{int(acc_score)}%</div></div>", unsafe_allow_html=True)
-
-        # Chart
-        st.markdown("<div class='gemini-card'>", unsafe_allow_html=True)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index[-60:], y=df['Close'].tail(60), line=dict(color='#4285f4', width=3), name="History"))
-        
-        future_dates = [df.index[-1], df.index[-1] + pd.Timedelta(days=5)]
-        fig.add_trace(go.Scatter(x=future_dates + future_dates[::-1], 
-                                y=[last_p, pred_p + error_margin] + [pred_p - error_margin, last_p],
-                                fill='toself', fillcolor='rgba(155, 114, 203, 0.1)', line=dict(color='rgba(255,255,255,0)'),
-                                hoverinfo="skip", showlegend=False))
-        
-        fig.add_trace(go.Scatter(x=future_dates, y=[last_p, pred_p], line=dict(color='#9b72cb', dash='dot', width=3), name="AI Path"))
-        fig.update_layout(plot_bgcolor='white', paper_bgcolor='white', height=400, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # Truth-Tracker Ledger
-        st.markdown("### 📊 Neural Performance Ledger")
-        l_cols = st.columns(5)
-        for i, item in enumerate(history_data):
-            with l_cols[i]:
-                badge = "badge-win" if item['Status'] == 'win' else "badge-loss"
-                st.markdown(f"""
-                    <div class='gemini-card' style='padding:15px; text-align:center; border-top: 4px solid {"#1e8e3e" if item["Status"]=="win" else "#d93025"}'>
-                        <small style='color:#70757a;'>{item['Date']}</small><br>
-                        <b style='font-size:16px;'>{item['Outcome']}</b><br>
-                        <span class='{badge}'>{item['Result']}</span>
-                    </div>
-                """, unsafe_allow_html=True)
-
-        # About / Intelligence Loop Section
-        with st.expander("ℹ️ How the Quantum AI Engine Works"):
-            st.markdown("""
-            ### **The Intelligence Loop**
-            * **Recursive Learning:** This model is not static. It retrains its neural forest on every request using the most recent 100-day window.
-            * **Self-Correction:** The 'Confidence' score is a real-time backtest. The AI reviews its last 5 predictions and admits its mistakes to keep you informed.
-            * **Probability Zone:** The shaded area accounts for historical volatility, mapping the range where the price is mathematically likely to land.
-            """)
-    else:
-        st.error("Intelligence synchronization failed. Please try again in 60 seconds.")
+        train_df['Target'] = train
