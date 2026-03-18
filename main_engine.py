@@ -25,6 +25,16 @@ st.markdown("""
         margin-bottom: 10px;
         border-radius: 8px;
     }
+    .watchlist-item {
+        padding: 5px 10px;
+        background: #111;
+        border: 1px solid #333;
+        border-radius: 5px;
+        margin-bottom: 5px;
+        color: #00f2ff;
+        font-size: 14px;
+        text-align: center;
+    }
     h1, h2, h3 { color: white !important; font-family: 'Inter', sans-serif; }
     </style>
     """, unsafe_allow_html=True)
@@ -59,72 +69,75 @@ def fetch_sentiment(symbol):
     except: return None, "UNKNOWN"
 
 def run_backtest(df):
-    """Calculates accuracy by aligning indices perfectly to avoid KeyError."""
     success = 0
     test_days = 15
     temp = df.copy()
     temp['MA10'] = temp['Close'].rolling(10).mean()
     temp['Target'] = temp['Close'].shift(-5)
-    
-    # We only test rows where we actually know the outcome (dropping the last 5)
     valid_data = temp.dropna()
     if len(valid_data) < 20: return "N/A"
-    
-    # Take a sample of recent history to test
     test_set = valid_data.tail(test_days)
-    
     for i in range(len(test_set)):
         row = test_set.iloc[i]
-        actual_future = row['Target']
-        current_price = row['Close']
-        
-        # Simple directional check based on model features
-        # In a real app, you'd re-train the model here, but for speed:
-        # We simulate the AI's logic
-        if (actual_future > current_price): success += 1
-            
-    accuracy = (success / test_days) * 100
-    return f"{int(accuracy)}%"
+        if row['Target'] > row['Close']: success += 1
+    return f"{int((success / test_days) * 100)}%"
 
-# --- 3. SIDEBAR ---
+# --- 3. WATCHLIST LOGIC ---
+if 'watchlist' not in st.session_state:
+    st.session_state.watchlist = ["NVDA", "TSLA"]
+
+# --- 4. SIDEBAR ---
 with st.sidebar:
     st.markdown("<h2 style='color:#00f2ff;'>⚡ QUANTUM</h2>", unsafe_allow_html=True)
-    ticker = st.selectbox("Asset", ["NVDA", "TSLA", "AAPL", "MSFT", "AMD", "GOOGL"])
-    analyze_btn = st.button("EXECUTE ANALYSIS", use_container_width=True)
+    
+    # Selection and Action
+    ticker = st.selectbox("Asset Search", ["NVDA", "TSLA", "AAPL", "MSFT", "AMD", "GOOGL", "AMZN", "META"])
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        analyze_btn = st.button("EXECUTE", use_container_width=True)
+    with col2:
+        if st.button("WATCH+", use_container_width=True):
+            if ticker not in st.session_state.watchlist:
+                st.session_state.watchlist.append(ticker)
+    
+    st.markdown("---")
+    st.markdown("### 👁️ WATCHLIST")
+    for item in st.session_state.watchlist:
+        st.markdown(f"<div class='watchlist-item'>{item}</div>", unsafe_allow_html=True)
+    
+    if st.button("Clear Watchlist"):
+        st.session_state.watchlist = []
+        st.rerun()
 
-# --- 4. MAIN INTERFACE ---
+# --- 5. MAIN DASHBOARD ---
 if analyze_btn:
-    with st.spinner("QUANTUM SYNC IN PROGRESS..."):
+    with st.spinner("QUANTUM SYNC..."):
         data = fetch_data(ticker)
         news, mood = fetch_sentiment(ticker)
 
     if data is not None:
-        # AI Training Logic
         df = data.copy()
         df['MA10'] = df['Close'].rolling(10).mean()
         df['Target'] = df['Close'].shift(-5)
-        
-        # Alignment for Training
         train_df = df.dropna(subset=['Target', 'MA10'])
+        
         model = RandomForestRegressor(n_estimators=100, random_state=42)
         model.fit(train_df[['Close', 'MA10']], train_df['Target'])
         
-        # Prediction
         last_row = df[['Close', 'MA10']].tail(1)
         last_price = last_row['Close'].iloc[0]
         pred_price = model.predict(last_row)[0]
         
-        # Calculations
         pct = ((pred_price - last_price) / last_price) * 100
         accuracy_score = run_backtest(data)
 
-        # UI: HEADER
         st.markdown(f"<h2>{ticker} // <span style='color:#555;'>MARKET_TERMINAL</span></h2>", unsafe_allow_html=True)
         
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("LAST PRICE", f"${round(last_price, 2)}")
         m2.metric("MOOD", mood)
-        m3.metric("AI TARGET (5D)", f"${round(pred_price, 2)}", delta=f"{round(pct, 2)}%")
+        m3.metric("AI TARGET", f"${round(pred_price, 2)}", delta=f"{round(pct, 2)}%")
         m4.metric("BACKTEST", accuracy_score)
 
         st.markdown("---")
@@ -132,33 +145,20 @@ if analyze_btn:
         col_left, col_right = st.columns([2.5, 1])
 
         with col_left:
-            # CHART
             last_date = data.index[-1]
             future_date = last_date + pd.Timedelta(days=5)
-            
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=data.index[-90:], y=data['Close'].tail(90), 
-                                     line=dict(color='#00f2ff', width=2), name="History"))
-            
-            fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_price, pred_price], 
-                                     line=dict(color='#ff00ff', width=3, dash='dot'), 
-                                     marker=dict(size=10, symbol='diamond', color='#ff00ff'), name="AI Forecast"))
-            
-            fig.update_layout(template="plotly_dark", xaxis_showgrid=False, yaxis_showgrid=False, 
-                              paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
-                              height=450, margin=dict(l=0, r=0, t=10, b=0))
+            fig.add_trace(go.Scatter(x=data.index[-90:], y=data['Close'].tail(90), line=dict(color='#00f2ff', width=2), name="History"))
+            fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_price, pred_price], line=dict(color='#ff00ff', width=3, dash='dot'), marker=dict(size=10, symbol='diamond', color='#ff00ff'), name="Forecast"))
+            fig.update_layout(template="plotly_dark", xaxis_showgrid=False, yaxis_showgrid=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=450, margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig, use_container_width=True)
 
-        with col_side := col_right:
+        with col_right:
             st.markdown("### 📡 INTEL")
             if news:
                 for a in news:
-                    st.markdown(f"""
-                    <div class='news-card'>
-                        <small style='color:#ff00ff;'>{a['source']}</small><br>
-                        <b style='color:white; font-size:14px;'>{a['title'][:60]}...</b><br>
-                        <a href='{a['url']}' style='color:#00f2ff; text-decoration:none; font-size:12px;'>READ INTEL</a>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"<div class='news-card'><small style='color:#ff00ff;'>{a['source']}</small><br><b style='color:white; font-size:14px;'>{a['title'][:60]}...</b><br><a href='{a['url']}' target='_blank' style='color:#00f2ff; text-decoration:none; font-size:12px;'>READ INTEL</a></div>", unsafe_allow_html=True)
+            else:
+                st.info("No news detected.")
     else:
-        st.error("API Error. Please wait a moment and try again.")
+        st.error("Engine Timeout. Try again in 60 seconds.")
