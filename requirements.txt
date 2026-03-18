@@ -1,8 +1,6 @@
 streamlit
-yfinance
+requests
 pandas
 numpy
 scikit-learn
-pytz
-altair
 plotly
