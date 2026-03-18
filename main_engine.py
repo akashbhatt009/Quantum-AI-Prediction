@@ -33,16 +33,27 @@ st.markdown("""
         background: linear-gradient(90deg, #4285f4, #9b72cb, #d96570);
         color: white; border: none; border-radius: 100px; padding: 12px 40px; font-weight: 500;
     }
-    .badge-win { background: #e6f4ea; color: #1e8e3e; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 12px; }
-    .badge-loss { background: #fce8e6; color: #d93025; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 12px; }
+    .badge-win { background: #e6f4ea; color: #1e8e3e; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 11px; }
+    .badge-loss { background: #fce8e6; color: #d93025; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 11px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. ENHANCED DATA & NEWS ENGINE ---
-@st.cache_data(ttl=600) # Reduced cache time to see fresh news faster
+# --- 3. DIVERSIFIED TICKER LIST ---
+# Grouped by sector for a balanced portfolio
+TICKER_MAP = {
+    "Technology": ["NVDA", "AAPL", "MSFT"],
+    "Finance": ["JPM", "V"],
+    "Healthcare": ["LLY", "PFE"],
+    "Energy/Gold": ["XOM", "GLD"],
+    "Consumer": ["AMZN"]
+}
+# Flatten the list for the selectbox
+ALL_TICKERS = [t for sub in TICKER_MAP.values() for t in sub]
+
+# --- 4. DATA & NEWS ENGINE ---
+@st.cache_data(ttl=600)
 def fetch_all_intel(symbol):
     try:
-        # Price Data Fetch
         url_p = f'https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={AV_API_KEY}'
         r_p = requests.get(url_p).json()
         if "Time Series (Daily)" not in r_p: return None, None
@@ -51,8 +62,7 @@ def fetch_all_intel(symbol):
         df.index = pd.to_datetime(df.index)
         df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
         
-        # News Data Fetch (Added 'topics' to widen the net if ticker news is low)
-        url_n = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={symbol}&topics=technology,earnings&apikey={AV_API_KEY}"
+        url_n = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={symbol}&apikey={AV_API_KEY}"
         r_n = requests.get(url_n).json()
         news_feed = r_n.get("feed", [])[:4] 
         
@@ -67,33 +77,30 @@ def get_performance_history(df):
     history = []
     correct_count = 0
     for date, row in valid.iterrows():
-        predicted_up = row['MA10'] > row['Close']
-        actual_up = row['Actual_5D'] > row['Close']
-        is_correct = (predicted_up == actual_up)
+        is_correct = (row['MA10'] > row['Close']) == (row['Actual_5D'] > row['Close'])
         if is_correct: correct_count += 1
         history.append({
             "Date": date.strftime('%b %d'), "Outcome": f"${row['Actual_5D']:.2f}",
             "Status": "win" if is_correct else "loss", "Result": "CORRECT" if is_correct else "MISSED"
         })
-    accuracy = (correct_count / 5) * 100 if len(valid) > 0 else 0
-    return history, accuracy
+    return history, (correct_count / 5) * 100 if len(valid) > 0 else 0
 
-# --- 4. INTERFACE ---
+# --- 5. INTERFACE ---
 st.markdown("<h1 style='text-align: center; margin-top: 30px;'>Quantum AI Prediction</h1>", unsafe_allow_html=True)
 
 c1, c2, c3 = st.columns([1, 1.2, 1])
 with c2:
-    ticker = st.selectbox("", ["NVDA", "TSLA", "AAPL", "MSFT", "GOOGL", "AMD"], label_visibility="collapsed")
+    ticker = st.selectbox("", ALL_TICKERS, label_visibility="collapsed")
     run = st.button("Generate Intelligence Report", use_container_width=True)
 
 if run:
-    with st.spinner("Analyzing neural patterns and headlines..."):
+    with st.spinner(f"Analyzing {ticker}..."):
         df, news = fetch_all_intel(ticker)
     
     if df is not None:
         history_data, acc_score = get_performance_history(df)
         
-        # Training Logic
+        # ML Logic
         df['MA10'] = df['Close'].rolling(10).mean()
         train_df = df.dropna(subset=['Close', 'MA10']).copy()
         train_df['Target'] = train_df['Close'].shift(-5)
@@ -110,7 +117,7 @@ if run:
         m1, m2, m3, m4 = st.columns(4)
         m1.markdown(f"<div class='gemini-card'><div class='m-label'>Price</div><div class='m-value'>${last_p:.2f}</div></div>", unsafe_allow_html=True)
         m2.markdown(f"<div class='gemini-card'><div class='m-label'>AI Target</div><div class='m-value'>${pred_p:.2f}</div></div>", unsafe_allow_html=True)
-        m3.markdown(f"<div class='gemini-card'><div class='m-label'>Signal</div><div class='m-value'>{round(change, 1)}%</div></div>", unsafe_allow_html=True)
+        m3.markdown(f"<div class='gemini-card'><div class='m-label'>Signal</div><div class='m-value'>{round(change, 1)}% {('🚀' if change > 0 else '📉')}</div></div>", unsafe_allow_html=True)
         m4.markdown(f"<div class='gemini-card'><div class='m-label'>Confidence</div><div class='m-value'>{int(acc_score)}%</div></div>", unsafe_allow_html=True)
 
         # UI: Chart & News
@@ -125,17 +132,19 @@ if run:
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_right:
-            st.markdown("### 📰 Market News")
+            st.markdown("### 📰 Intelligence Feed")
             if news:
                 for item in news:
+                    sentiment = item.get('overall_sentiment_label', 'Neutral')
                     st.markdown(f"""
                         <div class='news-card'>
-                            <small style='color:#4285f4; font-weight:bold;'>{item.get('source', 'Financial News')}</small><br>
-                            <a href='{item.get('url', '#')}' target='_blank' style='text-decoration:none; color:#1f1f1f; font-size:14px; font-weight:500;'>{item.get('title', 'Headline unavailable')}</a>
+                            <small style='color:#70757a;'>{item.get('source', 'Market')}</small> 
+                            <span style='font-size:10px; color:{"#1e8e3e" if "Bullish" in sentiment else "#d93025"}'>{sentiment}</span><br>
+                            <a href='{item.get('url', '#')}' target='_blank' style='text-decoration:none; color:#1f1f1f; font-size:14px; font-weight:500;'>{item.get('title', 'Headline')}</a>
                         </div>
                     """, unsafe_allow_html=True)
             else:
-                st.warning("No live headlines found. The API limit may be cooling down.")
+                st.warning("No recent headlines for this sector.")
 
         # Truth Ledger
         st.markdown("### 📊 Neural Performance Ledger")
@@ -151,14 +160,14 @@ if run:
                     </div>
                 """, unsafe_allow_html=True)
     else:
-        st.error("Intelligence synchronization failed. Please wait a moment and retry.")
+        st.error("API Limit reached or Ticker not found. Please try again in 1 minute.")
 
-# --- 5. PERMANENT ABOUT SECTION ---
+# --- 6. PERMANENT ABOUT SECTION ---
 st.markdown("---")
 with st.expander("ℹ️ How the Quantum AI Engine Works"):
     st.markdown("""
     ### **The Intelligence Loop**
-    * **Recursive Learning:** The model retrains itself on the latest 100-day window every time you run a report. 
-    * **Self-Correction:** The 'Confidence' metric is a directional backtest. The AI looks at its last 5 completed windows to calculate its trend accuracy.
-    * **Sentiment Engine:** The news panel captures the qualitative context (headlines) that quantitative data alone might miss.
+    * **Diversified Analysis:** By tracking Tech (NVDA), Finance (JPM), and Gold (GLD), the AI can recognize different market conditions.
+    * **Recursive Learning:** The model retrains its weights every time you run a report to stay current with yesterday's close.
+    * **Performance Ledger:** Transparency is core—the AI reviews its last 5 directional predictions and posts its 'Truth' record at the bottom.
     """)
