@@ -112,4 +112,71 @@ if run:
         # ML Training
         df['MA10'] = df['Close'].rolling(10).mean()
         train_df = df.dropna(subset=['Close', 'MA10']).copy()
-        train_df['Target'] = train
+        train_df['Target'] = train_df['Close'].shift(-5)
+        model_ready = train_df.dropna()
+        
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(model_ready[['Close', 'MA10']], model_ready['Target'])
+        
+        last_p = df['Close'].iloc[-1]
+        pred_p = model.predict(df[['Close', 'MA10']].tail(1))[0]
+        change = ((pred_p - last_p) / last_p) * 100
+
+        # UI Row 1: Metrics
+        m1, m2, m3, m4 = st.columns(4)
+        m1.markdown(f"<div class='gemini-card'><div class='m-label'>Price</div><div class='m-value'>${last_p:.2f}</div></div>", unsafe_allow_html=True)
+        m2.markdown(f"<div class='gemini-card'><div class='m-label'>AI Target</div><div class='m-value'>${pred_p:.2f}</div></div>", unsafe_allow_html=True)
+        m3.markdown(f"<div class='gemini-card'><div class='m-label'>Signal</div><div class='m-value'>{round(change, 1)}%</div></div>", unsafe_allow_html=True)
+        m4.markdown(f"<div class='gemini-card'><div class='m-label'>Confidence</div><div class='m-value'>{int(acc_score)}%</div></div>", unsafe_allow_html=True)
+
+        # UI Row 2: Chart & News
+        col_left, col_right = st.columns([2, 1])
+        
+        with col_left:
+            st.markdown("<div class='gemini-card'>", unsafe_allow_html=True)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index[-60:], y=df['Close'].tail(60), line=dict(color='#4285f4', width=3)))
+            fig.add_trace(go.Scatter(x=[df.index[-1], df.index[-1] + pd.Timedelta(days=5)], y=[last_p, pred_p], line=dict(color='#9b72cb', dash='dot', width=3)))
+            fig.update_layout(plot_bgcolor='white', paper_bgcolor='white', height=400, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with col_right:
+            st.markdown("### 📰 Market News")
+            if news:
+                for item in news:
+                    st.markdown(f"""
+                        <div class='news-card'>
+                            <small style='color:#4285f4; font-weight:bold;'>{item.get('source', 'Market')}</small><br>
+                            <a href='{item.get('url', '#')}' target='_blank' style='text-decoration:none; color:#1f1f1f; font-size:14px; font-weight:500;'>{item.get('title', 'Headline')}</a>
+                        </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("No recent headlines found.")
+
+        # Truth Ledger
+        st.markdown("### 📊 Neural Performance Ledger")
+        l_cols = st.columns(5)
+        for i, item in enumerate(history_data):
+            with l_cols[i]:
+                badge = "badge-win" if item['Status'] == 'win' else "badge-loss"
+                st.markdown(f"""
+                    <div class='gemini-card' style='padding:15px; text-align:center; border-top: 4px solid {"#1e8e3e" if item["Status"]=="win" else "#d93025"}'>
+                        <small style='color:#70757a;'>{item['Date']}</small><br>
+                        <b style='font-size:16px;'>{item['Outcome']}</b><br>
+                        <span class='{badge}'>{item['Result']}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+
+    else:
+        st.error("Data synchronization failed. Please try again.")
+
+# --- 5. PERMANENT ABOUT SECTION ---
+st.markdown("---")
+with st.expander("ℹ️ How the Quantum AI Engine Works"):
+    st.markdown("""
+    ### **The Intelligence Loop**
+    * **Recursive Learning:** This terminal rebuilds its neural weights on every request using a Random Forest architecture and the latest 100 days of market action.
+    * **Self-Correction:** The 'Confidence' score is a directional backtest comparing the AI's past 5 predictions against actual results.
+    * **Sentiment Integration:** The 'Market News' panel shows the real-time context that influences the broader trend.
+    """)
